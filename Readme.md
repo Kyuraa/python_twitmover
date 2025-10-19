@@ -26,4 +26,4 @@ Press Ctrl+C to stop the monitoring.
 
 ## Note
 
-This tool is for personal usage only.
+This tool is for personal usage only. 
