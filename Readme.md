@@ -23,3 +23,7 @@ python twit_mover.py
 ```
 
 Press Ctrl+C to stop the monitoring.
+
+## Note
+
+This tool is for personal usage only.
