@@ -15,6 +15,11 @@ PIXIV_FOLDER = os.path.join(DOWNLOADS_FOLDER, "pixiv")
 PIXIV_PATTERN = re.compile(r'^\d+_p\d+')
 CHECK_INTERVAL = 1  # seconds
 
+# Media file extensions
+IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.ico', '.svg'}
+VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpeg', '.mpg'}
+MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
+
 
 def set_file_timestamps(file_path):
     """Set all file timestamps (creation, modification, access) to current time."""
@@ -56,6 +61,22 @@ def get_destination_folder(filename):
     return None
 
 
+def is_media_file(filename):
+    """Check if file is an image or video based on extension."""
+    ext = os.path.splitext(filename)[1].lower()
+    return ext in MEDIA_EXTENSIONS
+
+
+def is_within_last_days(file_path, days=2):
+    """Check if file was modified within the last N days."""
+    try:
+        mtime = os.path.getmtime(file_path)
+        age_seconds = time.time() - mtime
+        return age_seconds < (days * 24 * 60 * 60)
+    except OSError:
+        return False
+
+
 class TwitFileHandler(FileSystemEventHandler):
     def __init__(self):
         self.processed_files = set()
@@ -78,8 +99,10 @@ class TwitFileHandler(FileSystemEventHandler):
 
         filename = os.path.basename(file_path)
         dest_folder = get_destination_folder(filename)
+        is_media = is_media_file(filename)
 
-        if dest_folder is None:
+        # Skip if not a matching pattern and not a media file
+        if dest_folder is None and not is_media:
             return
 
         # Wait to ensure file is completely downloaded
@@ -94,57 +117,74 @@ class TwitFileHandler(FileSystemEventHandler):
             with open(file_path, 'rb'):
                 pass
 
-            # Create destination folder if it doesn't exist
-            os.makedirs(dest_folder, exist_ok=True)
+            if dest_folder is not None:
+                # Move file to destination folder
+                os.makedirs(dest_folder, exist_ok=True)
+                destination = os.path.join(dest_folder, filename)
 
-            # Move the file
-            destination = os.path.join(dest_folder, filename)
+                # Handle duplicate filenames
+                counter = 1
+                base_name, extension = os.path.splitext(filename)
+                while os.path.exists(destination):
+                    new_filename = f"{base_name}_{counter}{extension}"
+                    destination = os.path.join(dest_folder, new_filename)
+                    counter += 1
 
-            # Handle duplicate filenames
-            counter = 1
-            base_name, extension = os.path.splitext(filename)
-            while os.path.exists(destination):
-                new_filename = f"{base_name}_{counter}{extension}"
-                destination = os.path.join(dest_folder, new_filename)
-                counter += 1
-
-            shutil.move(file_path, destination)
-            set_file_timestamps(destination)
-            self.processed_files.add(file_path)
-            folder_name = os.path.basename(dest_folder)
-            print(f"✓ Moved: {filename} -> {folder_name}/")
+                shutil.move(file_path, destination)
+                set_file_timestamps(destination)
+                self.processed_files.add(file_path)
+                folder_name = os.path.basename(dest_folder)
+                print(f"✓ Moved: {filename} -> {folder_name}/")
+            elif is_media:
+                # Just update timestamps for media files staying in Downloads
+                set_file_timestamps(file_path)
+                self.processed_files.add(file_path)
+                print(f"✓ Updated date: {filename}")
 
         except PermissionError:
             print(f"⚠ File still being written: {filename}, will retry...")
         except Exception as e:
-            print(f"✗ Error moving {filename}: {e}")
+            print(f"✗ Error processing {filename}: {e}")
 
 def scan_existing_files():
     """Scan for existing matching files in Downloads folder on startup"""
     try:
         for filename in os.listdir(DOWNLOADS_FOLDER):
+            file_path = os.path.join(DOWNLOADS_FOLDER, filename)
+            if not os.path.isfile(file_path):
+                continue
+
             dest_folder = get_destination_folder(filename)
-            if dest_folder is not None:
-                file_path = os.path.join(DOWNLOADS_FOLDER, filename)
-                if os.path.isfile(file_path):
-                    try:
-                        os.makedirs(dest_folder, exist_ok=True)
-                        destination = os.path.join(dest_folder, filename)
+            is_media = is_media_file(filename)
 
-                        # Handle duplicates
-                        counter = 1
-                        base_name, extension = os.path.splitext(filename)
-                        while os.path.exists(destination):
-                            new_filename = f"{base_name}_{counter}{extension}"
-                            destination = os.path.join(dest_folder, new_filename)
-                            counter += 1
+            # Skip if not a matching pattern and not a recent media file
+            if dest_folder is None and not (is_media and is_within_last_days(file_path, 2)):
+                continue
 
-                        shutil.move(file_path, destination)
-                        set_file_timestamps(destination)
-                        folder_name = os.path.basename(dest_folder)
-                        print(f"✓ Moved existing: {filename} -> {folder_name}/")
-                    except Exception as e:
-                        print(f"✗ Error moving existing {filename}: {e}")
+            try:
+                if dest_folder is not None:
+                    # Move file to destination folder
+                    os.makedirs(dest_folder, exist_ok=True)
+                    destination = os.path.join(dest_folder, filename)
+
+                    # Handle duplicates
+                    counter = 1
+                    base_name, extension = os.path.splitext(filename)
+                    while os.path.exists(destination):
+                        new_filename = f"{base_name}_{counter}{extension}"
+                        destination = os.path.join(dest_folder, new_filename)
+                        counter += 1
+
+                    shutil.move(file_path, destination)
+                    set_file_timestamps(destination)
+                    folder_name = os.path.basename(dest_folder)
+                    print(f"✓ Moved existing: {filename} -> {folder_name}/")
+                elif is_media:
+                    # Just update timestamps for media files staying in Downloads
+                    set_file_timestamps(file_path)
+                    print(f"✓ Updated date: {filename}")
+            except Exception as e:
+                print(f"✗ Error processing existing {filename}: {e}")
     except Exception as e:
         print(f"Error scanning existing files: {e}")
 
@@ -157,9 +197,10 @@ def main():
     print("File Auto-Mover Started")
     print("=" * 50)
     print(f"Monitoring: {DOWNLOADS_FOLDER}")
-    print(f"Patterns:")
+    print(f"Move patterns:")
     print(f"  twit_* -> {TWIT_FOLDER}")
     print(f"  [id]_p[n] -> {PIXIV_FOLDER}")
+    print(f"Date update: Images & videos (last 2 days)")
     print("=" * 50)
     
     # Scan for existing files first
