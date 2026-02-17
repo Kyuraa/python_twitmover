@@ -77,6 +77,27 @@ def is_within_last_days(file_path, days=2):
         return False
 
 
+def is_already_today(file_path):
+    """Check if file's creation and modification dates are already today."""
+    try:
+        from datetime import date
+        today = date.today()
+
+        # Check modification time
+        mtime = os.path.getmtime(file_path)
+        if date.fromtimestamp(mtime) != today:
+            return False
+
+        # Check creation time (Windows)
+        ctime = os.path.getctime(file_path)
+        if date.fromtimestamp(ctime) != today:
+            return False
+
+        return True
+    except OSError:
+        return False
+
+
 class TwitFileHandler(FileSystemEventHandler):
     def __init__(self):
         self.processed_files = set()
@@ -137,6 +158,9 @@ class TwitFileHandler(FileSystemEventHandler):
                 print(f"✓ Moved: {filename} -> {folder_name}/")
             elif is_media:
                 # Just update timestamps for media files staying in Downloads
+                if is_already_today(file_path):
+                    self.processed_files.add(file_path)
+                    return
                 set_file_timestamps(file_path)
                 self.processed_files.add(file_path)
                 print(f"✓ Updated date: {filename}")
@@ -181,6 +205,8 @@ def scan_existing_files():
                     print(f"✓ Moved existing: {filename} -> {folder_name}/")
                 elif is_media:
                     # Just update timestamps for media files staying in Downloads
+                    if is_already_today(file_path):
+                        continue
                     set_file_timestamps(file_path)
                     print(f"✓ Updated date: {filename}")
             except Exception as e:
